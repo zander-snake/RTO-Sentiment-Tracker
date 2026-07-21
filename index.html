@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Rentokil Sub-Brand Sentiment Tracker</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="dashboard_data.js"></script>
+<style>
+  :root {
+    --bg: #f4f5f7; --card: #ffffff; --ink: #1a1d21; --muted: #6b7280;
+    --border: #e5e7eb; --accent: #d62828; --pos: #2a9d8f; --neg: #d62828;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+         background: var(--bg); color: var(--ink); }
+  header { background: #1a1d21; color: #fff; padding: 18px 28px; display: flex;
+           align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+  header h1 { font-size: 19px; margin: 0; font-weight: 650; }
+  header .sub { color: #9ca3af; font-size: 12.5px; }
+  .banner { background: #fff3cd; color: #7a5c00; border-bottom: 1px solid #e6d9a8;
+            padding: 9px 28px; font-size: 13px; }
+  main { max-width: 1240px; margin: 0 auto; padding: 20px 24px 48px; }
+  .controls { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; margin-bottom: 18px; }
+  .controls label { font-size: 12.5px; color: var(--muted); margin-right: 5px; }
+  select { padding: 6px 10px; border: 1px solid var(--border); border-radius: 7px;
+           background: #fff; font-size: 13px; }
+  .chip { padding: 5px 12px; border-radius: 15px; border: 1.5px solid var(--border);
+          background: #fff; font-size: 12.5px; cursor: pointer; user-select: none; }
+  .chip.on { color: #fff; }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+          gap: 14px; margin-bottom: 18px; }
+  .kpi { background: var(--card); border: 1px solid var(--border); border-radius: 11px; padding: 15px 17px; }
+  .kpi .lbl { font-size: 12px; color: var(--muted); margin-bottom: 5px; }
+  .kpi .val { font-size: 25px; font-weight: 700; }
+  .kpi .delta { font-size: 12.5px; margin-top: 3px; }
+  .up { color: var(--pos); } .down { color: var(--neg); }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 11px;
+          padding: 17px; margin-bottom: 14px; }
+  .card h2 { font-size: 14px; margin: 0 0 12px; font-weight: 650; }
+  .card.wide { grid-column: 1 / -1; }
+  .chart-wrap { position: relative; height: 300px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; color: var(--muted); font-weight: 600; font-size: 11.5px;
+       text-transform: uppercase; letter-spacing: .04em; padding: 7px 9px;
+       border-bottom: 1px solid var(--border); }
+  td { padding: 8px 9px; border-bottom: 1px solid #f1f2f4; vertical-align: top; }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 7px; }
+  .stars { color: #e8a500; letter-spacing: 1px; white-space: nowrap; }
+  .sent-badge { display: inline-block; min-width: 46px; text-align: center; padding: 2px 7px;
+                border-radius: 5px; font-size: 12px; font-weight: 600; color: #fff; }
+  .rev-text { color: #374151; max-width: 640px; }
+  .rev-meta { color: var(--muted); font-size: 11.5px; margin-top: 2px; }
+  .footer-note { color: var(--muted); font-size: 12px; margin-top: 22px; line-height: 1.55; }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Rentokil Sub-Brand Review Sentiment &mdash; North America</h1>
+  <span class="sub" id="genAt"></span>
+</header>
+<div class="banner" id="sampleBanner" style="display:none">
+  &#9888;&#65039; Showing <b>synthetic sample data</b> for preview. Run
+  <code>collect_reviews.py</code> then <code>build_dashboard.py</code> to load real reviews.
+</div>
+<main>
+  <div class="controls">
+    <span><label>Window</label>
+      <select id="windowSel">
+        <option value="12">Last 12 months</option>
+        <option value="24" selected>Last 24 months</option>
+        <option value="999">All history</option>
+      </select>
+    </span>
+    <span><label>Smoothing</label>
+      <select id="smoothSel">
+        <option value="1">Monthly (raw)</option>
+        <option value="3" selected>3-month rolling</option>
+      </select>
+    </span>
+    <span id="brandChips"></span>
+  </div>
+
+  <div class="kpis" id="kpis"></div>
+
+  <div class="grid">
+    <div class="card wide">
+      <h2>Sentiment index by brand <span style="color:var(--muted);font-weight:400">(&minus;1 very negative &rarr; +1 very positive; dashed = volume-weighted aggregate)</span></h2>
+      <div class="chart-wrap"><canvas id="sentChart"></canvas></div>
+    </div>
+    <div class="card">
+      <h2>Review volume by month</h2>
+      <div class="chart-wrap"><canvas id="volChart"></canvas></div>
+    </div>
+    <div class="card">
+      <h2>Rating distribution (selected window)</h2>
+      <div class="chart-wrap"><canvas id="distChart"></canvas></div>
+    </div>
+    <div class="card">
+      <h2>Key themes (selected window) <span style="color:var(--muted);font-weight:400">&mdash; % of reviews mentioning, colored by avg sentiment</span></h2>
+      <div class="chart-wrap"><canvas id="themeChart"></canvas></div>
+    </div>
+    <div class="card">
+      <h2>Theme trend <span style="color:var(--muted);font-weight:400">&mdash; monthly mention share, 3-mo rolling</span></h2>
+      <div class="chart-wrap"><canvas id="themeTrendChart"></canvas></div>
+    </div>
+    <div class="card wide">
+      <h2>Brand summary (selected window)</h2>
+      <table id="brandTable"></table>
+    </div>
+    <div class="card wide">
+      <h2>Most recent reviews</h2>
+      <table id="revTable"></table>
+    </div>
+  </div>
+
+  <p class="footer-note">
+    Sentiment blends the star rating (60%) with VADER text sentiment (40%).
+    Themes are keyword-lexicon tags defined in config.json &mdash; edit them freely.
+    Sources: Trustpilot and Google Maps reviews per configured branch locations &mdash;
+    coverage is a sample of locations, not a census. Review-platform data skews negative
+    (unhappy customers review more) &mdash; read <i>changes</i> in the index, not its level.
+    This is an informational research tool, not investment advice.
+  </p>
+</main>
+
+<script>
+const D = window.DASHBOARD_DATA;
+const BRANDS = D.brands;
+const state = { window: 24, smooth: 3, active: new Set(BRANDS.map(b => b.id)) };
+let charts = {};
+
+document.getElementById('genAt').textContent =
+  'Data generated ' + (D.generated_at || '').slice(0, 16).replace('T', ' ') + ' UTC';
+if (D.is_sample) document.getElementById('sampleBanner').style.display = 'block';
+
+const allMonths = [...new Set(D.monthly.map(m => m.month))].sort();
+function monthsInWindow() { return allMonths.slice(-state.window); }
+function rows() {
+  const ms = new Set(monthsInWindow());
+  return D.monthly.filter(m => ms.has(m.month) && state.active.has(m.brand));
+}
+function fmt(x, d = 2) { return (x >= 0 ? '+' : '') + x.toFixed(d); }
+function sentColor(s) { return s > 0.15 ? '#2a9d8f' : s < -0.15 ? '#d62828' : '#e8a500'; }
+function roll(arr, w) {
+  return arr.map((_, i) => {
+    const seg = arr.slice(Math.max(0, i - w + 1), i + 1).filter(v => v !== null);
+    return seg.length ? seg.reduce((a, b) => a + b, 0) / seg.length : null;
+  });
+}
+
+// ---- brand chips
+const chipBox = document.getElementById('brandChips');
+BRANDS.forEach(b => {
+  const c = document.createElement('span');
+  c.className = 'chip on'; c.textContent = b.name;
+  c.style.background = b.color; c.style.borderColor = b.color;
+  c.onclick = () => {
+    if (state.active.has(b.id)) { state.active.delete(b.id); c.className = 'chip'; c.style.background = '#fff'; c.style.color = 'inherit'; }
+    else { state.active.add(b.id); c.className = 'chip on'; c.style.background = b.color; c.style.color = '#fff'; }
+    render();
+  };
+  chipBox.appendChild(c);
+});
+document.getElementById('windowSel').onchange = e => { state.window = +e.target.value; render(); };
+document.getElementById('smoothSel').onchange = e => { state.smooth = +e.target.value; render(); };
+
+function aggSeries(ms, rs) {
+  return ms.map(mo => {
+    const inMo = rs.filter(r => r.month === mo);
+    const n = inMo.reduce((a, r) => a + r.count, 0);
+    return n ? inMo.reduce((a, r) => a + r.avg_sentiment * r.count, 0) / n : null;
+  });
+}
+
+function render() {
+  const ms = monthsInWindow(), rs = rows();
+  Object.values(charts).forEach(c => c.destroy()); charts = {};
+
+  // KPIs: current vs 3 months ago (on smoothed aggregate)
+  const agg = roll(aggSeries(ms, rs), state.smooth);
+  const last = agg[agg.length - 1], prev = agg[agg.length - 4];
+  const totalN = rs.reduce((a, r) => a + r.count, 0);
+  const pctNeg = totalN ? rs.reduce((a, r) => a + r.pct_negative * r.count, 0) / totalN : 0;
+  const avgRating = totalN ? rs.reduce((a, r) => a + r.avg_rating * r.count, 0) / totalN : 0;
+  const delta = (last != null && prev != null) ? last - prev : null;
+  document.getElementById('kpis').innerHTML = `
+    <div class="kpi"><div class="lbl">Reviews in window</div><div class="val">${totalN.toLocaleString()}</div></div>
+    <div class="kpi"><div class="lbl">Aggregate sentiment index</div>
+      <div class="val" style="color:${sentColor(last ?? 0)}">${last != null ? fmt(last) : '&mdash;'}</div>
+      <div class="delta ${delta > 0 ? 'up' : 'down'}">${delta != null ? fmt(delta, 3) + ' vs 3 mo ago' : ''}</div></div>
+    <div class="kpi"><div class="lbl">Avg star rating</div><div class="val">${avgRating.toFixed(2)} &#9733;</div></div>
+    <div class="kpi"><div class="lbl">% negative (1&ndash;2&#9733;)</div><div class="val">${pctNeg.toFixed(1)}%</div></div>`;
+
+  // sentiment lines
+  const dsets = BRANDS.filter(b => state.active.has(b.id)).map(b => {
+    const series = ms.map(mo => {
+      const r = rs.find(x => x.brand === b.id && x.month === mo);
+      return r ? r.avg_sentiment : null;
+    });
+    return { label: b.name, data: roll(series, state.smooth), borderColor: b.color,
+             backgroundColor: b.color, tension: .3, pointRadius: 0, borderWidth: 2, spanGaps: true };
+  });
+  dsets.push({ label: 'Aggregate (weighted)', data: agg, borderColor: '#111',
+               borderDash: [6, 4], tension: .3, pointRadius: 0, borderWidth: 2.5, spanGaps: true });
+  charts.sent = new Chart(document.getElementById('sentChart'), {
+    type: 'line', data: { labels: ms, datasets: dsets },
+    options: { maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
+      scales: { y: { min: -1, max: 1 } }, plugins: { legend: { labels: { boxWidth: 14, boxHeight: 3 } } } }
+  });
+
+  // volume stacked
+  charts.vol = new Chart(document.getElementById('volChart'), {
+    type: 'bar',
+    data: { labels: ms, datasets: BRANDS.filter(b => state.active.has(b.id)).map(b => ({
+      label: b.name, backgroundColor: b.color,
+      data: ms.map(mo => (rs.find(x => x.brand === b.id && x.month === mo) || {}).count || 0) })) },
+    options: { maintainAspectRatio: false, scales: { x: { stacked: true }, y: { stacked: true } },
+      plugins: { legend: { display: false } } }
+  });
+
+  // rating distribution
+  charts.dist = new Chart(document.getElementById('distChart'), {
+    type: 'bar',
+    data: { labels: ['1&#9733;', '2&#9733;', '3&#9733;', '4&#9733;', '5&#9733;'].map(s => s.replace('&#9733;', '★')),
+      datasets: BRANDS.filter(b => state.active.has(b.id)).map(b => {
+        const tot = [0, 0, 0, 0, 0];
+        rs.filter(r => r.brand === b.id).forEach(r => r.ratings.forEach((n, i) => tot[i] += n));
+        const s = tot.reduce((a, x) => a + x, 0) || 1;
+        return { label: b.name, backgroundColor: b.color, data: tot.map(x => 100 * x / s) };
+      }) },
+    options: { maintainAspectRatio: false,
+      scales: { y: { title: { display: true, text: '% of brand reviews' } } },
+      plugins: { legend: { display: false } } }
+  });
+
+  // themes
+  const themeList = D.themes || [];
+  if (themeList.length) {
+    const msSet2 = new Set(ms);
+    const tms = (D.theme_monthly || []).filter(t => state.active.has(t.brand) && msSet2.has(t.month));
+    const themeTotals = themeList.map(th => {
+      const rows2 = tms.filter(t => t.theme === th.id);
+      const n = rows2.reduce((a, t) => a + t.count, 0);
+      const sent = n ? rows2.reduce((a, t) => a + t.avg_sentiment * t.count, 0) / n : 0;
+      return { ...th, n, sent, share: totalN ? 100 * n / totalN : 0 };
+    }).filter(t => t.n > 0).sort((a, b) => b.n - a.n);
+
+    charts.theme = new Chart(document.getElementById('themeChart'), {
+      type: 'bar',
+      data: { labels: themeTotals.map(t => t.name),
+        datasets: [{ data: themeTotals.map(t => t.share),
+          backgroundColor: themeTotals.map(t => sentColor(t.sent)) }] },
+      options: { indexAxis: 'y', maintainAspectRatio: false,
+        plugins: { legend: { display: false }, tooltip: { callbacks: {
+          label: c => { const t = themeTotals[c.dataIndex];
+            return `${t.share.toFixed(1)}% of reviews (${t.n.toLocaleString()}) - avg sentiment ${fmt(t.sent)}`; } } } },
+        scales: { x: { title: { display: true, text: '% of reviews in window' } } } }
+    });
+
+    const palette = ['#d62828', '#1d6fb8', '#f77f00', '#5a189a', '#2a9d8f', '#e8a500', '#495057', '#c2185b'];
+    const monthTotals = ms.map(mo => rs.filter(r => r.month === mo).reduce((a, r) => a + r.count, 0));
+    charts.themeTrend = new Chart(document.getElementById('themeTrendChart'), {
+      type: 'line',
+      data: { labels: ms, datasets: themeTotals.slice(0, 5).map((th, i) => {
+        const series = ms.map((mo, j) => {
+          const n = tms.filter(t => t.theme === th.id && t.month === mo).reduce((a, t) => a + t.count, 0);
+          return monthTotals[j] ? 100 * n / monthTotals[j] : null;
+        });
+        return { label: th.name, data: roll(series, 3), borderColor: palette[i % palette.length],
+                 tension: .3, pointRadius: 0, borderWidth: 2, spanGaps: true };
+      }) },
+      options: { maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
+        scales: { y: { title: { display: true, text: '% of monthly reviews' } } },
+        plugins: { legend: { labels: { boxWidth: 14, boxHeight: 3 } } } }
+    });
+  }
+
+  // brand table
+  const bt = ['<tr><th>Brand</th><th>Reviews</th><th>Avg rating</th><th>Sentiment</th><th>% negative</th><th>Trend (3 mo)</th></tr>'];
+  BRANDS.filter(b => state.active.has(b.id)).forEach(b => {
+    const br = rs.filter(r => r.brand === b.id);
+    const n = br.reduce((a, r) => a + r.count, 0);
+    if (!n) return;
+    const sent = br.reduce((a, r) => a + r.avg_sentiment * r.count, 0) / n;
+    const rat = br.reduce((a, r) => a + r.avg_rating * r.count, 0) / n;
+    const neg = br.reduce((a, r) => a + r.pct_negative * r.count, 0) / n;
+    const smoothed = roll(ms.map(mo => { const r = br.find(x => x.month === mo); return r ? r.avg_sentiment : null; }), 3);
+    const l = smoothed[smoothed.length - 1], p = smoothed[smoothed.length - 4];
+    const d = (l != null && p != null) ? l - p : null;
+    bt.push(`<tr><td><span class="dot" style="background:${b.color}"></span>${b.name}</td>
+      <td>${n.toLocaleString()}</td><td>${rat.toFixed(2)} ★</td>
+      <td><span class="sent-badge" style="background:${sentColor(sent)}">${fmt(sent)}</span></td>
+      <td>${neg.toFixed(1)}%</td>
+      <td class="${d > 0 ? 'up' : 'down'}">${d != null ? fmt(d, 3) : '—'}</td></tr>`);
+  });
+  document.getElementById('brandTable').innerHTML = bt.join('');
+
+  // recent reviews
+  const tNames = Object.fromEntries((D.themes || []).map(t => [t.id, t.name]));
+  const bName = Object.fromEntries(BRANDS.map(b => [b.id, b]));
+  const msSet = new Set(ms);
+  const revs = D.recent_reviews.filter(r => state.active.has(r.brand) && msSet.has(r.date.slice(0, 7))).slice(0, 40);
+  const rt = ['<tr><th>Date</th><th>Brand</th><th>Rating</th><th>Sent.</th><th>Review</th></tr>'];
+  revs.forEach(r => {
+    const b = bName[r.brand] || { name: r.brand, color: '#888' };
+    rt.push(`<tr><td style="white-space:nowrap">${r.date}</td>
+      <td style="white-space:nowrap"><span class="dot" style="background:${b.color}"></span>${b.name}</td>
+      <td><span class="stars">${'★'.repeat(r.rating)}${'☆'.repeat(5 - r.rating)}</span></td>
+      <td><span class="sent-badge" style="background:${sentColor(r.sentiment)}">${fmt(r.sentiment)}</span></td>
+      <td><div class="rev-text">${r.title ? '<b>' + r.title + '</b> — ' : ''}${r.text}</div>
+          <div class="rev-meta">${r.source}${r.location ? ' · ' + r.location : ''}${
+            (r.themes || []).length ? ' · <b>' + r.themes.map(t => (tNames[t] || t)).join(', ') + '</b>' : ''}</div></td></tr>`);
+  });
+  document.getElementById('revTable').innerHTML = rt.join('');
+}
+render();
+</script>
+</body>
+</html>
